@@ -1,0 +1,12 @@
+[tool.poetry]
+name = "shopify-apps"
+version = "0.1.0"
+description = ""
+authors = ["Ritesh Kadmawala <ritesh@loanzen.in>"]
+
+[tool.poetry.dependencies]
+python = "*"
+aiohttp = "^3.5"
+
+[tool.poetry.dev-dependencies]
+pytest = "^3.0"
