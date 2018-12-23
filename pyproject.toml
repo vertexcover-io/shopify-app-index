@@ -7,6 +7,13 @@ authors = ["Ritesh Kadmawala <ritesh@loanzen.in>"]
 [tool.poetry.dependencies]
 python = "*"
 aiohttp = "^3.5"
+dataclasses = "^0.6.0"
+cchardet = "^2.1"
+bs4 = "^0.0.1"
 
 [tool.poetry.dev-dependencies]
 pytest = "^3.0"
+rope = "^0.11.0"
+black = "^18.3-alpha.4"
+flake8 = "^3.6"
+ipython = "^7.2"
