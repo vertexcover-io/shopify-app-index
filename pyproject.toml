@@ -1,8 +1,10 @@
 [tool.poetry]
 name = "shopify-apps"
 version = "0.1.0"
-description = ""
-authors = ["Ritesh Kadmawala <ritesh@loanzen.in>"]
+description = "A crawler to fetch information about all the shopify apps"
+authors = ["Ritesh Kadmawala <ritesh@vertexcover.io>"]
+license = "MIT"
+
 
 [tool.poetry.dependencies]
 python = "*"
