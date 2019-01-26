@@ -1,69 +1,31 @@
 import logging
-from dataclasses import dataclass, asdict
-from typing import List
-import enum
 from asyncio import Queue
 import asyncio
 import re
 import traceback
+import sys
 
 import aiohttp
 from bs4 import BeautifulSoup
 
-
-class Category(enum.Enum):
-    STORE_DESIGN = "Store design"
-    SALES_AND_CONVERSION = "Sales and conversion optimization"
-    MARKETING = "Marketing"
-    ORDER_AND_SHIPPING = "Orders and shipping"
-    CUSTOMER_SUPPORT = "Customer support"
-    INVENTORY_MANAGEMENT = "Inventory management"
-    REPORTING = "Reporting"
-    FINDING_PRODUCT = "Finding and adding products"
-    PRODUCTIVITY = "Productivity"
-    FINANCES = "Finances"
-    TRUST_AND_SECURITY = "Trust and security"
-    PLACES_TO_SELL = "Places to sell"
-
-
-class TaskType(enum.Enum):
-    LIST = 1
-    DETAIL = 2
-
-
-@dataclass
-class App:
-    name: str
-    description: str
-    tags: List[str]
-    category: Category
-    avg_rating: float
-    total_reviews: int
-    rating_map: dict
-    is_paid: bool
-    pricing_plans: List[float]
-    developer_name: str
-    developer_website: str = None
+from shopify_crawler.model import App, Category, TaskType
+from shopify_crawler.datastore import DataStore, FireStore
 
 
 class ShopifyAppCrawler:
     ROOT_URL = "https://apps.shopify.com/browse"
-    AVG_RATING_RE = re.compile("([\d.]+) of")
+    AVG_RATING_RE = re.compile(r"([\d.]+) of")
     REVIEW_COUNT_RE = re.compile(r"\(([\d.]+) reviews?\)")
-    AIRTABLE_URL = "https://api.airtable.com/v0/apppHLxW7K18N7S3c/app-list"
-    AIRTABLE_API_KEY = "keyqnICzoZugUKcjE"
+    # AIRTABLE_API_KEY = "keyqnICzoZugUKcjE"
 
-    def __init__(self, max_workers):
-        self.loop = loop
+    def __init__(self, *, db: DataStore, max_workers: int):
         self.q = Queue()
         self.max_workers = max_workers
         self.app_list = []
         self.failed_apps = []
         self.failed_urls = []
         self.session = None
-        self.airtable_auth_header = {
-            "Authorization": "Bearer {}".format(self.AIRTABLE_API_KEY)
-        }
+        self.db = db
 
     async def run(self):
         print("Starting Crawler")
@@ -72,7 +34,8 @@ class ShopifyAppCrawler:
         await self.q.put((TaskType.LIST, {"page_no": 1}))
         await self.q.join()
         print("Done with all items inqueue")
-        for  w in workers:
+        self.session.close()
+        for w in workers:
             w.cancel()
 
     async def crawl(self):
@@ -117,7 +80,7 @@ class ShopifyAppCrawler:
                         {"url": detail_url, "error": traceback.format_exc()}
                     )
                 else:
-                    await self._add_row(app)
+                    await self.db.save(app)
             else:
                 print("Failed while crawling detail page", detail_url)
 
@@ -179,36 +142,3 @@ class ShopifyAppCrawler:
         )
         return app
 
-    async def _add_row(self, app):
-        row = {}
-        for key, value in asdict(app).items():
-            if key == "rating_map":
-                for index, val in enumerate(value):
-                    row[f"{index + 1} Star Rating"] = val
-                continue
-
-            if isinstance(value, list):
-                value = ", ".join(value)
-            if isinstance(value, enum.Enum):
-                value = value.name
-            row[key.title().replace("_", " ")] = value
-
-        resp = await self.session.post(
-            self.AIRTABLE_URL, json={"fields": row}, headers=self.airtable_auth_header
-        )
-        if resp.status >= 400:
-            resp_json = await resp.json()
-            error = resp_json["error"]["message"]
-
-            print(f"Failed to add app: {app.name} to airtable for app: {error}")
-            self.failed_apps.append({"app": app, "error": error})
-        else:
-            self.app_list.append(app)
-            print(f"Added new app: {app.name}. Total Now Added: {len(self.app_list)}")
-
-
-if __name__ == "__main__":
-    # logging.basicConfig(level=logging.DEBUG)
-    loop = asyncio.get_event_loop()
-    crawler = ShopifyAppCrawler(100)
-    loop.run_until_complete(crawler.run())
