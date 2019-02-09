@@ -36,6 +36,10 @@ class CrawlTask:
         return CrawlTask(type=self.type, url=self.url, page=self.page, retries=self.retries + 1)
 
 
+class StopCrawler(Exception):
+    pass
+
+
 class ShopifyAppCrawler:
 
     AVG_RATING_RE = re.compile(r"([\d.]+) of")
@@ -99,9 +103,14 @@ class ShopifyAppCrawler:
         try:
             async with self._get_url(task.url, params=params) as resp:
                 if resp.status in (200, 422):
-                    self.q.put_nowait(CrawlTask.create_list_crawl(task.page + 1))
-                    self._parse_list_page(await resp.text())
-                    print(f"Parsed List Page: {task.page + 1}")
+                    try:
+                        self._parse_list_page(await resp.text())
+                    except StopCrawler as s:
+                        print(s)
+                    else:
+                        self.q.put_nowait(CrawlTask.create_list_crawl(task.page + 1))
+                        print(f"Parsed List Page: {task.page + 1}")
+
                 else:
                     resp.raise_for_status()
 
@@ -112,6 +121,9 @@ class ShopifyAppCrawler:
         soup = BeautifulSoup(html, "html.parser")
         for link in soup.find_all("a", class_="ui-app-card"):
             self.q.put_nowait(CrawlTask.create_detail_crawl(link.get("href")))
+        else:
+            raise StopCrawler('Completed crawling all pages')
+
 
     async def _crawl_detail_page(self, task: CrawlTask):
         try:
