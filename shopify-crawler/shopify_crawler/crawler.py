@@ -59,7 +59,7 @@ class ShopifyAppCrawler:
         print("Starting Crawler")
         self.session = aiohttp.ClientSession()
         workers = [asyncio.Task(self.crawl()) for _ in range(self.max_workers)]
-        await self.q.put(CrawlTask(TaskType.LIST, page=0))
+        await self.q.put(CrawlTask(TaskType.LIST, page=1))
         await self.q.join()
         print("Done with all items inqueue")
         await self.session.close()
@@ -119,11 +119,12 @@ class ShopifyAppCrawler:
 
     def _parse_list_page(self, html):
         soup = BeautifulSoup(html, "html.parser")
-        for link in soup.find_all("a", class_="ui-app-card"):
-            self.q.put_nowait(CrawlTask.create_detail_crawl(link.get("href")))
-        else:
+        cards = soup.find_all("a", class_="ui-app-card")
+        if not cards:
             raise StopCrawler('Completed crawling all pages')
 
+        for link in cards:
+            self.q.put_nowait(CrawlTask.create_detail_crawl(link.get("href")))
 
     async def _crawl_detail_page(self, task: CrawlTask):
         try:
