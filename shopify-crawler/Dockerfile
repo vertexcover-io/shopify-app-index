@@ -16,7 +16,7 @@ LABEL name="shopify-crawler" \
 WORKDIR /app
 
 ## Install gcc
-RUN apk update && apk add g++ python3-dev musl-dev linux-headers --no-cache
+RUN apk update && apk add g++ python3-dev musl-dev linux-headers libffi libffi-dev libressl-dev --no-cache
 
 ## Copy pyproject.*
 COPY pyproject.toml poetry.lock ./

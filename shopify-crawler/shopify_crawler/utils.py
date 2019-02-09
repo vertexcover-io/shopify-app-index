@@ -3,17 +3,54 @@ import concurrent
 import asyncio
 from datetime import datetime
 import pytz
+import os
+import tempfile
 
-
+from shopify_crawler import config
 import aiohttp
 from google.cloud import firestore
+from azure.keyvault import KeyVaultClient
+from msrestazure.azure_active_directory import MSIAuthentication
+
+
+def fetch_google_creds_azure_kv():
+    credentials = MSIAuthentication()
+    key_vault_client = KeyVaultClient(
+        credentials
+    )
+
+    key_vault_uri = config.key_vault_uri()
+
+    key_vault_secret = config.key_vault_google_creds_key()
+
+    secret = key_vault_client.get_secret(
+        key_vault_uri,  # Your KeyVault URL
+        key_vault_secret,
+        ""
+    )
+    return secret.value
+
+
+def get_firestore_client():
+    project_env = config.project_env()
+    if project_env == config.ProjectEnv.DEV:
+        return firestore.Client()
+
+    google_creds = fetch_google_creds_azure_kv()
+
+    google_creds_file = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+
+    with open(google_creds_file, 'w') as fl:
+        fl.write(google_creds)
+
+    return firestore.Client()
 
 
 class FirestoreBatchClient:
     DEFAULT_BATCH_SIZE = 10
 
     def __init__(self, *, max_batch_size: int = None):
-        self.db = firestore.Client()
+        self.db = get_firestore_client()
         self.batch_client = self.db.batch()
         self._count = 0
         self.max_batch_size = max_batch_size or self.DEFAULT_BATCH_SIZE
