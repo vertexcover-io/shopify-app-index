@@ -17,7 +17,6 @@ class MissingKeyVaultSecret(ConfigError):
         super().__init__("Missing key vault secret")
 
 
-
 class ProjectEnv:
     DEV = 'dev'
     STAGING = 'staging'
@@ -44,3 +43,11 @@ def key_vault_google_creds_key():
         return os.environ['KEY_VAULT_SECRET']
     except KeyError:
         raise MissingKeyVaultSecret()
+
+
+def shopify_root_url():
+    return "https://apps.shopify.com/browse"
+
+
+def max_crawl_retry():
+    return os.environ.get('MAX_CRAWL_RETRY', 5)

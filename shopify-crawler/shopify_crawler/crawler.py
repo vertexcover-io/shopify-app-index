@@ -4,16 +4,40 @@ import asyncio
 import re
 import traceback
 import sys
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+
 
 import aiohttp
+from aiohttp import ClientError
 from bs4 import BeautifulSoup
 
 from shopify_crawler.model import App, Category, TaskType
 from shopify_crawler.datastore import DataStore, FireStore
+from shopify_crawler import config
+
+
+@dataclass
+class CrawlTask:
+    type: TaskType
+    url: str = field(default=config.shopify_root_url())
+    page: int = field(default=None)
+    retries: int = field(default=0)
+
+    @classmethod
+    def create_list_crawl(cls, page_no):
+        return CrawlTask(type=TaskType.LIST, page=page_no)
+
+    @classmethod
+    def create_detail_crawl(cls, url):
+        return CrawlTask(type=TaskType.DETAIL, url=url)
+
+    def retry(self):
+        return CrawlTask(type=self.type, url=self.url, page=self.page, retries=self.retries + 1)
 
 
 class ShopifyAppCrawler:
-    ROOT_URL = "https://apps.shopify.com/browse"
+
     AVG_RATING_RE = re.compile(r"([\d.]+) of")
     REVIEW_COUNT_RE = re.compile(r"\(([\d.]+) reviews?\)")
     # AIRTABLE_API_KEY = "keyqnICzoZugUKcjE"
@@ -22,67 +46,89 @@ class ShopifyAppCrawler:
         self.q = Queue()
         self.max_workers = max_workers
         self.app_list = []
-        self.failed_apps = []
-        self.failed_urls = []
-        self.session = None
+        self.failed_tasks = []
+        self.session: aiohttp.ClientSession = None
         self.db = db
+        self.throttler = asyncio.Semaphore(max_workers)
 
     async def run(self):
         print("Starting Crawler")
         self.session = aiohttp.ClientSession()
         workers = [asyncio.Task(self.crawl()) for _ in range(self.max_workers)]
-        await self.q.put((TaskType.LIST, {"page_no": 1}))
+        await self.q.put(CrawlTask(TaskType.LIST, page=0))
         await self.q.join()
         print("Done with all items inqueue")
-        self.session.close()
+        await self.session.close()
         for w in workers:
             w.cancel()
 
     async def crawl(self):
         while True:
-            task_type, metadata = await self.q.get()
+            task = await self.q.get()
             try:
-                if task_type == TaskType.LIST:
-                    await self._crawl_list_page(metadata["page_no"])
+                if task.type == TaskType.LIST:
+                    await self._crawl_list_page(task)
                 else:
-                    await self._crawl_detail_page(metadata["url"])
+                    await self._crawl_detail_page(task)
             except Exception:
                 traceback.print_exc()
 
             self.q.task_done()
 
-    async def _crawl_list_page(self, page_no):
-        params = {"page": page_no}
-        async with self.session.get(self.ROOT_URL, params=params) as resp:
-            if resp.status != 422:
-                self.q.put_nowait((TaskType.LIST, {"page_no": page_no + 1}))
-                self._parse_list_page(page_no, await resp.text())
-                print(f"Parsed List Page: {page_no + 1}")
-            else:
-                print("Reached End of App list")
+    @asynccontextmanager
+    async def _get_url(self, url, *args, **kwargs):
+        async with self.throttler:
+            async with self.session.get(url, *args, **kwargs) as resp:
+                yield resp
 
-    def _parse_list_page(self, page_no, html):
+    def _handle_connection_error(self, task, ex):
+        print(f"Connection failure while fetching {task.url}: {ex}")
+        if task.retries < config.max_crawl_retry():
+            retry_task = task.retry()
+            self.q.put_nowait(retry_task)
+            print(f"Retrying {retry_task}")
+        else:
+            self.failed_tasks.append({
+                'task': task,
+                'error': ex
+            })
+            print(f"Max Retries reached for {task}. Ignoring")
+
+    async def _crawl_list_page(self, task: CrawlTask):
+        params = {"page": task.page}
+        try:
+            async with self._get_url(task.url, params=params) as resp:
+                if resp.status in (200, 422):
+                    self.q.put_nowait(CrawlTask.create_list_crawl(task.page + 1))
+                    self._parse_list_page(await resp.text())
+                    print(f"Parsed List Page: {task.page + 1}")
+                else:
+                    resp.raise_for_status()
+
+        except ClientError as ex:
+            self._handle_connection_error(task, ex)
+
+    def _parse_list_page(self, html):
         soup = BeautifulSoup(html, "html.parser")
         for link in soup.find_all("a", class_="ui-app-card"):
-            self.q.put_nowait((TaskType.DETAIL, {"url": link.get("href")}))
+            self.q.put_nowait(CrawlTask.create_detail_crawl(link.get("href")))
 
-        print(f"Added all detail page from list page:{page_no}")
-
-    async def _crawl_detail_page(self, detail_url):
-        async with self.session.get(detail_url) as resp:
-            if resp.status == 200:
+    async def _crawl_detail_page(self, task: CrawlTask):
+        try:
+            async with self._get_url(task.url, raise_for_status=True) as resp:
                 try:
                     app = self._parse_detail_page(await resp.text())
-                except Exception:
-                    print(f"Failed to parse detail page for app: {detail_url}:")
-                    traceback.print_exc()
-                    self.failed_urls.append(
-                        {"url": detail_url, "error": traceback.format_exc()}
-                    )
-                else:
                     await self.db.save(app)
-            else:
-                print("Failed while crawling detail page", detail_url)
+                except Exception as err:
+                    print(f"Failed to parse detail page for {task}: {err}")
+                    self.failed_tasks.append({
+                        'task': task,
+                        'error': err
+                    })
+                    return
+
+        except ClientError as ex:
+            self._handle_connection_error(task, ex)
 
     def _parse_detail_page(self, html):
         soup = BeautifulSoup(html, "html.parser")

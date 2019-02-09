@@ -47,7 +47,7 @@ def get_firestore_client():
 
 
 class FirestoreBatchClient:
-    DEFAULT_BATCH_SIZE = 10
+    DEFAULT_BATCH_SIZE = 20
 
     def __init__(self, *, max_batch_size: int = None):
         self.db = get_firestore_client()

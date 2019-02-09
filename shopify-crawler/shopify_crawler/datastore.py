@@ -16,7 +16,7 @@ class DataStoreException(Exception):
 
 
 class DataStore:
-    def save(app: App):
+    def save(self, app: App):
         pass
 
 

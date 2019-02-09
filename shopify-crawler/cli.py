@@ -7,7 +7,7 @@ import click
 from shopify_crawler.datastore import FireStore
 from shopify_crawler.crawler import ShopifyAppCrawler
 
-MAX_WORKERS = os.environ.get("MAX_WORKERS", 10)
+MAX_WORKERS = os.environ.get("MAX_WORKERS", 20)
 
 
 @click.group()
@@ -25,7 +25,10 @@ def crawl(max_workers=MAX_WORKERS):
     loop = asyncio.get_event_loop()
     db = FireStore()
     crawler = ShopifyAppCrawler(db=db, max_workers=max_workers)
+
     loop.run_until_complete(crawler.run())
+    loop.run_until_complete(asyncio.sleep(0.250))
+    loop.close()
 
 
 @cli.group()
